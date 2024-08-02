@@ -7,6 +7,7 @@ import pandas as pd
 import json
 import plotly.graph_objects as go
 import warnings
+import os
 
 
 # Mapbox access token
@@ -770,7 +771,8 @@ def update_figures(selected_year, selected_counties, selected_category, clickDat
 
 # Run the Dash app
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    port = int(os.environ.get('PORT', 8050))
+    app.run_server(debug=True, host='0.0.0.0', port=port)
 
 
     
