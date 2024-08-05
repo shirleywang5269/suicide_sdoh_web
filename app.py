@@ -725,7 +725,7 @@ app.layout = html.Div([
                 'fontSize': '15px'
             }
         ),
-    ], style={‘display’: ‘flex’, ‘justifyContent’: ‘center’, ‘alignItems’: ‘center’, ‘height’: ‘100vh’}),
+    ], style={'display': 'flex', 'justifyContent': 'center', 'alignItems': 'center', 'height': '100vh'}),
     html.Div([
         html.Div([
             html.Button('Confirm Your Selection', id='confirm-button', n_clicks=0, style={
