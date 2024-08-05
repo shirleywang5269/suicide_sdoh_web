@@ -693,7 +693,7 @@ app.layout = html.Div([
         children=dcc.Graph(id='choropleth-map', style={'position': 'relative', 'height': '80vh'}),
         fullscreen=True
     ),
-    html.Div("Click-Drag on the map to select counties", style={'textAlign': 'right', 'marginBottom': '10px'}),
+    html.Div("Click-Drag on the map to select counties", style={'textAlign': 'bottom', 'marginBottom': '10px'}),
     html.Br(),
     html.Div([
         html.Br(),
@@ -720,12 +720,12 @@ app.layout = html.Div([
             maxHeight=200,  # Limit the dropdown height
             className="dropdown",
             style={
-                'width': '100%',
+                'width': '70%',
                 'height': '40px',  # Adjust the height to make the dropdown menu box bigger
                 'fontSize': '15px'
             }
         ),
-    ], style={'flex': '1', 'marginBottom': '15px'}),
+    ], style={'center': '1', 'marginBottom': '15px'}),
     html.Div([
         html.Div([
             html.Button('Confirm Your Selection', id='confirm-button', n_clicks=0, style={
