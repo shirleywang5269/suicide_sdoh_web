@@ -1,34 +1,30 @@
+# Animated map
+
 import dash
-from dash import Dash, html, dcc, Input, Output, State, no_update, callback_context
+from dash import Dash, html, dcc, Input, Output, State, no_update
 import plotly.express as px
 import pandas as pd
-import os
 import json
 import plotly.graph_objects as go
 import warnings
-import asyncio
-import functools
-import nest_asyncio
-from shapely.geometry import shape
-import time
+import os
 
-warnings.filterwarnings("ignore")
-
-# Apply nest_asyncio to allow nested event loops
-nest_asyncio.apply()
-
-# # Initialize the Dash app
-# service_prefix = os.getenv("JUPYTERHUB_SERVICE_PREFIX")
-# port = 50003
-# server_url = "https://jupyter.nersc.gov"
-# app = Dash(__name__, requests_pathname_prefix=f"{service_prefix}proxy/{port}/")
 
 # Mapbox access token
 mapbox_access_token = "pk.eyJ1IjoibGFwaGF0cmFkMDIiLCJhIjoiY2x5ZjFkdTZqMDM4cjJxcHh4dW9oNHd6dSJ9.cbUxYCzotjR4xeDr0fD-Iw"
 app = dash.Dash(__name__)
+
 # Folder paths and file names
+# folder_path = '~/Desktop/website'
+# home_dir = os.path.expanduser('~')
+# input_folder = os.path.join(folder_path, 'data')
+# demographic_file = os.path.join(input_folder, 'demo/2020-demographic-info.csv')
+# shapefile_name = os.path.join(home_dir, 'Desktop', 'website', 'data', 'shapefile', 'county.json')
+
 demographic_file='data/demo/2020-demographic-info.csv'
 shapefile_name = 'data/shapefile/county.json'
+
+
 years = list(range(2000, 2021))
 
 # Read demographic data
@@ -38,41 +34,18 @@ demographic_data = pd.read_csv(demographic_file, encoding='latin1')
 with open(shapefile_name) as f:
     geojson_data = json.load(f)
 
-# Simplify the GeoJSON data
-def simplify_geojson(geojson, tolerance=0.01):
-    from shapely.geometry import shape
-    from shapely.geometry import mapping
-    for feature in geojson['features']:
-        geom = shape(feature['geometry'])
-        simplified_geom = geom.simplify(tolerance, preserve_topology=True)
-        feature['geometry'] = mapping(simplified_geom)
-    return geojson
-
-geojson_data = simplify_geojson(geojson_data)
-
 # Add a new column in geojson_data for the last 5 digits of 'GEO_ID'
 for feature in geojson_data['features']:
     geo_id = feature['properties']['GEO_ID']
     county_id = geo_id[-5:]
     feature['properties']['county_id'] = county_id
-    geom = shape(feature['geometry'])
-    centroid = geom.centroid
-    feature['properties']['Latitude'] = centroid.y
-    feature['properties']['Longitude'] = centroid.x
 
 # Create FIPS code in demographic data
 demographic_data['FIPS'] = demographic_data['STATE'].astype(str).str.zfill(2) + demographic_data['COUNTY'].astype(str).str.zfill(3)
 demographic_data['county_id'] = demographic_data['FIPS'].astype(str)
 
-# Cache for data loading
-cache = {}
-
 # Function to load data for the selected year
-@functools.lru_cache(maxsize=128)
 def load_data(year):
-    if year in cache:
-        return cache[year]
-    
     if year in [2016, 2017, 2018]:
         sdoh_file = (f'data/SDOH_demo_Dash/{year}.csv')
     else:
@@ -98,20 +71,15 @@ def load_data(year):
     
     # Merge the GeoJSON data with the merged suicide and SDOH data
     final_merged_data = pd.merge(merged_data, geojson_properties_df, on='county_id', how='left')
-    
-    # Add Year column
-    final_merged_data['Year'] = year
 
-    cache[year] = final_merged_data
     return final_merged_data
 
 # Function to get top 5 counties by average suicide rate per 100,000
 def get_top_5_counties(data):
-    filtered_data = data[data['SuicideDeathRate'] <= 300]
-    top_5_counties = filtered_data.nlargest(5, 'SuicideDeathRate')['county_id'].tolist()
+    top_5_counties = data.nlargest(5, 'SuicideDeathRate')['CTYNAME'].tolist()
     return top_5_counties
 
-def create_choropleth_map(data):
+def create_animated_choropleth_map(data):
     # Ensure the 'SuicideDeathRate' column exists and normalize it to per 100,000
     if 'SuicideDeathRate' not in data.columns:
         data['SuicideDeathRate'] = (data['Deaths'] / data['POPESTIMATE2020']) * 100000
@@ -121,10 +89,11 @@ def create_choropleth_map(data):
 
     # Create hover text
     data['hover_text'] = (
+        'Year: ' + data['Year'].astype(str) + '<br>' +
         'County: ' + data['CTYNAME'].astype(str) + '<br>' +
         'State: ' + data['STNAME'].astype(str) + '<br>' +
         'Population: ' + data['POPESTIMATE2020'].map('{:,.0f}'.format) + '<br>' +
-        'Suicide Rate: ' + data['SuicideDeathRate'].map(lambda x: f'{x:.2f}' if pd.notna(x) else 'N/A')
+        'Suicide Rate: ' + data['SuicideDeathRate'].map(lambda x: f'{x:.0f}' if pd.notna(x) else 'N/A')
     )
 
     # Define the custom color scale
@@ -137,7 +106,7 @@ def create_choropleth_map(data):
         [1.0, 'maroon']
     ]
 
-    # Create the choropleth map using Plotly's express module
+    # Create the animated choropleth map using Plotly's express module
     fig = px.choropleth_mapbox(
         data,
         geojson=geojson_data,
@@ -148,6 +117,7 @@ def create_choropleth_map(data):
         hover_name=None,  # Disable default hover info
         hover_data={'county_id': False, 'SuicideDeathRate': False, 'hover_text': True, 'Year': False},  # Ensure only hover_text is shown
         custom_data=['hover_text'],  
+        animation_frame='Year',
         mapbox_style="light",
         center={"lat": 37.0902, "lon": -95.7129},
         zoom=3.4
@@ -159,7 +129,7 @@ def create_choropleth_map(data):
         hovertemplate='%{customdata[0]}<extra></extra>'
     )
 
-    # Update layout for play/pause buttons and enable selection tools
+    # Update layout for play/pause buttons
     fig.update_layout(
         mapbox_accesstoken=mapbox_access_token,
         height=800,
@@ -173,31 +143,42 @@ def create_choropleth_map(data):
         coloraxis_colorbar=dict(
             title="Suicide Rate (per 100,000)" 
         ),
-        dragmode='lasso',  # Allow lasso selection on the map
+        updatemenus=[
+            {
+                "buttons": [
+                    {
+                        "args": [None, {"frame": {"duration": 1000, "redraw": True}, "fromcurrent": True, "mode": "immediate"}],
+                        
+                        "method": "animate"
+                    },
+                    {
+                        "args": [[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}],
+                        
+                        "method": "animate"
+                    }
+                ],
+                "direction": "left",
+                "showactive": True,
+                "type": "buttons"
+         
+            }
+        ]
     )
 
     return fig
 
-def update_bar_graph(selected_year, selected_counties, selected_category, selected_data):
+def update_bar_graph(selected_year, selected_counties, selected_category, clickData):
     data = load_data(selected_year)
     
     # Ensure selected_counties is a list
     if selected_counties is None:
         selected_counties = []
 
-    # Process selected_data to get selected counties
-    if selected_data and 'points' in selected_data:
-        selected_counties = [point['location'] for point in selected_data['points']]
-
-    # If no counties selected, use top 5 counties
-    if not selected_counties:
-        selected_counties = get_top_5_counties(data)
-
-    # Limit the number of selected counties to 5
-    displayed_counties = selected_counties[:5]
-
+    # Get the top 5 counties by suicide rate
+    top_5_counties = get_top_5_counties(data)
+    
     # Ensure we only process the selected counties that exist in the data
-    county_data = data[data['county_id'].isin(displayed_counties)]
+    county_data = data[data['CTYNAME'].isin(selected_counties)]
 
     # Define the columns for each category
     categories = {
@@ -214,8 +195,8 @@ def update_bar_graph(selected_year, selected_counties, selected_category, select
 
     # Prepare data for the bar graph with individual columns
     bar_data = []
-    for county in displayed_counties:
-        county_info = county_data[county_data['county_id'] == county]
+    for county in selected_counties:
+        county_info = county_data[county_data['CTYNAME'] == county]
         if not county_info.empty:
             for col in columns:
                 bar_data.append({
@@ -234,6 +215,14 @@ def update_bar_graph(selected_year, selected_counties, selected_category, select
     if 'Metric' not in bar_df.columns:
         return go.Figure()
 
+    # Limit the number of counties displayed in the title
+    max_counties_in_title = 5  # Updated to allow up to 5 counties
+    displayed_counties = selected_counties[:max_counties_in_title]
+    if len(selected_counties) > max_counties_in_title:
+        title = f"Social Determinants for {', '.join(displayed_counties)} and {len(selected_counties) - max_counties_in_title} more counties"
+    else:
+        title = f"Social Determinants for {', '.join(displayed_counties)}"
+
     # Define custom color sequence
     custom_colors = ["#1c0c84", "#bc3484", "#8012a9", "#f38b44", "#f3cd38"]
 
@@ -244,7 +233,7 @@ def update_bar_graph(selected_year, selected_counties, selected_category, select
         y='Value',
         color='County',
         barmode='group',
-        title=f"Social Determinants for {', '.join(bar_df['County'].unique())}",
+        title=title,
         labels={'Value': 'Average Value'},
         template='plotly_white',
         color_discrete_sequence=custom_colors  # Use custom color sequence
@@ -252,7 +241,7 @@ def update_bar_graph(selected_year, selected_counties, selected_category, select
 
     # Customize hover labels to show information based on its county name
     hover_template = (
-        "%{x}: %{y:.2f}"
+        "%{x}: %{y:.0f}"
     )
 
     fig.update_traces(
@@ -271,7 +260,7 @@ def update_bar_graph(selected_year, selected_counties, selected_category, select
         yaxis_title='Value',
         template='plotly_white',  # Use a clean white template
         title={
-            'text': f"Social Determinants for {', '.join(bar_df['County'].unique())}",
+            'text': title, 
             'x': 0.5,  # Center the title horizontally
             'xanchor': 'center',
             'font': {'size': 14, 'color': 'black', 'family': 'Open Sans, sans-serif'}
@@ -314,20 +303,17 @@ def trend_bar_graph(selected_year, selected_counties, color_map):
     # Concatenate data for all years
     trend_data = pd.concat(all_years_data, ignore_index=True)
 
-    # If no counties selected, use top 5 counties
+    # Get the top 5 counties by suicide rate
     if not selected_counties:
         selected_counties = get_top_5_counties(trend_data)
 
     # Filter data for selected counties
-    trend_data = trend_data[trend_data['county_id'].isin(selected_counties)]
+    trend_data = trend_data[trend_data['CTYNAME'].isin(selected_counties)]
 
     # Group by year and county, then calculate the average suicide rate for each year
-    trend_data = trend_data.groupby(['Year', 'county_id']).agg({
+    trend_data = trend_data.groupby(['Year', 'CTYNAME']).agg({
         'SuicideDeathRate': 'mean'
     }).reset_index()
-
-    # Replace county_id with county name for better readability
-    trend_data = trend_data.merge(demographic_data[['county_id', 'CTYNAME']], on='county_id', how='left')
 
     # Create the trend bar graph
     fig = px.bar(
@@ -509,32 +495,29 @@ def scatter_graph(selected_year, selected_counties, color_map):
     # Concatenate data for all years
     full_data = pd.concat(all_years_data, ignore_index=True)
 
-    # If no counties selected, use top 5 counties
+    # Get the top 5 counties by suicide rate
     if not selected_counties:
         selected_counties = get_top_5_counties(full_data)
 
     # Filter data for selected counties
-    filtered_data = full_data[full_data['county_id'].isin(selected_counties)]
+    filtered_data = full_data[full_data['CTYNAME'].isin(selected_counties)]
 
     # Group by year and county, then calculate the average suicide rate for each year
-    grouped_data = filtered_data.groupby(['Year', 'county_id']).agg({
+    grouped_data = filtered_data.groupby(['year', 'CTYNAME']).agg({
         'SuicideDeathRate': 'mean'
     }).reset_index()
-
-    # Replace county_id with county name for better readability
-    grouped_data = grouped_data.merge(demographic_data[['county_id', 'CTYNAME']], on='county_id', how='left')
 
     # Create a figure
     fig = go.Figure()
 
     # Add a trace for each selected county
     for county in selected_counties:
-        county_data = grouped_data[grouped_data['county_id'] == county]
+        county_data = grouped_data[grouped_data['CTYNAME'] == county]
         fig.add_trace(go.Scatter(
-            x=county_data['Year'],
+            x=county_data['year'],
             y=county_data['SuicideDeathRate'],
             mode='lines+markers',
-            name=county_data['CTYNAME'].values[0],  # Use county name for legend
+            name=county,
             line=dict(color=color_map.get(county)),  # Set color from color_map
             hovertemplate="Year: %{x}<br>Suicide Rate: %{y:.0f}<extra></extra>"  # Format y-values without decimal points
         ))
@@ -578,57 +561,6 @@ def scatter_graph(selected_year, selected_counties, color_map):
 
     return fig
 
-def update_highest_suicide_rates_bar(data, selected_counties, selected_data):
-    # Process selected_data to get selected counties
-    if selected_data and 'points' in selected_data:
-        selected_counties = [point['location'] for point in selected_data['points']]
-
-    # Filter data for the selected counties
-    filtered_df = data[data['county_id'].isin(selected_counties)]
-
-    # Aggregate data
-    if filtered_df.empty:
-        # If no counties are selected, show aggregated data for all counties
-        agg_df = data.groupby('CTYNAME')['SuicideDeathRate'].mean().reset_index()
-    else:
-        agg_df = filtered_df.groupby('CTYNAME')['SuicideDeathRate'].mean().reset_index()
-
-    agg_df.columns = ['County', 'SuicideDeathRate']  # Ensure the column names are correct
-
-    # Sort values from highest to lowest and select top 50
-    top_agg_df = agg_df.sort_values(by='SuicideDeathRate', ascending=False).head(50)
-    
-    # Create the bar chart
-    fig = px.bar(
-        top_agg_df,
-        x='County',  # Use the correct column name
-        y='SuicideDeathRate',
-        title='Counties with Highest Suicide Death Rates',
-        labels={'SuicideDeathRate': 'Suicide Death Rate (per 100,000)', 'County': 'County'},  # Update labels
-        template='plotly_white',
-        color_discrete_sequence=['#8B0000']
-    )
-    
-    # Customize hover text to show values with 2 decimal points
-    fig.update_traces(
-        hovertemplate='County: %{x}<br>Suicide Death Rate: %{y:.2f}<extra></extra>'
-    )
-    
-    # Update layout for better style
-    fig.update_layout(
-        xaxis=dict(
-            title='County',
-            tickangle=-45,
-            title_standoff=10
-        ),
-        yaxis=dict(
-            title='Suicide Death Rate (per 100,000)',
-            title_standoff=10
-        ),
-        margin=dict(l=50, r=50, t=50, b=100)
-    )
-
-    return fig
 # Function to get explanatory notes based on category
 def get_category_notes(category):
     notes = {
@@ -675,7 +607,6 @@ def get_category_notes(category):
 # Layout of the app
 app.layout = html.Div([
     html.H1("Suicide Rates with Social Determinants", style={'textAlign': 'center'}),
-
     dcc.Slider(
         id='year-slider',
         min=min(years),
@@ -687,75 +618,37 @@ app.layout = html.Div([
         tooltip={"placement": "bottom", "always_visible": True},
         className="thicker-slider"
     ),
-    dcc.Loading(
-        id="loading-1",
-        type="default",
-        children=dcc.Graph(id='choropleth-map', style={'position': 'relative', 'height': '80vh'}),
-        fullscreen=True
-    ),
-    html.Div("Click-Drag on the map to select counties", style={'textAlign': 'right', 'marginBottom': '10px'}),
+    dcc.Graph(id='animated-choropleth-map', style={'position': 'relative', 'height': '80vh'}),
+    html.Br(),
+    html.Br(),
+    html.Br(),
+    html.Br(),
+    html.Br(),
+    html.Br(),
+    html.Br(),
+    html.Br(),
+    html.Br(),
+    html.Br(),
     html.Br(),
     html.Div([
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        dcc.Store(id='memory-output'),
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        html.Br(),
-        dcc.Dropdown(
-            id='county-dropdown',
-            options=[
-                {'label': f"{row['CTYNAME']}, {row['STNAME']}", 'value': row['county_id']}
-                for _, row in demographic_data.iterrows()
-            ],
-            multi=True,
-            placeholder="Please Select",
-            maxHeight=200,  # Limit the dropdown height
-            className="dropdown",
-            style={
-                'width': '100%',
-                'height': '40px',  # Adjust the height to make the dropdown menu box bigger
-                'fontSize': '15px'
-            }
-        ),
-    ], style={'flex': '1', 'marginBottom': '15px'}),
-    html.Div([
         html.Div([
-            html.Button('Confirm Your Selection', id='confirm-button', n_clicks=0, style={
-                'backgroundColor': '#007bff',
-                'color': 'white',  # White text
-                'border': 'none',  # Blue border
-                'padding': '10px 20px',  # Padding
-                'textAlign': 'center',  # Center text
-                'textDecoration': 'none',  # Remove underline
-                'display': 'inline-block',  # Inline block
-                'fontSize': '14px',  # Font size
-                'borderRadius': '5px',  # Rounded corners
-                'cursor': 'pointer'  # Pointer cursor
-            })  # Customized confirm button text
-        ], style={'flex': '1', 'marginRight': '10px'}),
-        html.Div([
-            html.Button('Clear All Selections', id='clear-button', n_clicks=0, style={
-                'backgroundColor': '#dc3545',
-                'color': 'white',  # White text
-                'border': 'none',  # Red border
-                'padding': '10px 20px',  # Padding
-                'textAlign': 'center',  # Center text
-                'textDecoration': 'none',  # Remove underline
-                'display': 'inline-block',  # Inline block
-                'fontSize': '14px',  # Font size
-                'borderRadius': '5px',  # Rounded corners
-                'cursor': 'pointer'  # Pointer cursor
-            })  # Customized reset button text
+            dcc.Store(id='memory-output'),
+            dcc.Dropdown(
+                id='county-dropdown',
+                options=[
+                    {'label': f"{row['CTYNAME']}, {row['STNAME']}", 'value': row['CTYNAME']}
+                    for _, row in demographic_data.iterrows()
+                ],
+                multi=True,
+                placeholder="Please Select",
+                maxHeight=200,  # Limit the dropdown height
+                className="dropdown"
+            ),
+            html.Small('* Select up to 5 Counties', style={'display': 'block', 'marginTop': '5px', 'color': 'gray'})
         ], style={'flex': '1'}),
-    ], style={'display': 'flex', 'alignItems': 'center', 'width': '400px', 'margin': '0 auto'}),
+        html.Button('Reset All', id='clear-button', n_clicks=0, style={'marginLeft': '10px'})
+    ], style={'display': 'flex', 'alignItems': 'center', 'width': '400px', 'margin': '15px auto'}),
+    html.Br(),
     html.Br(),
     html.Br(),
     html.Br(),
@@ -802,15 +695,14 @@ app.layout = html.Div([
     html.Br(),
     dcc.Graph(id='summary-sunburst'),  # Add the new summary sunburst
     dcc.Graph(id='trend-bar-graph'),  # Add the new trend bar graph
-    dcc.Graph(id='scatter-graph'),  # Add the new scatter graph
-    dcc.Graph(id='highest-suicide-rates-bar')  # Add the new bar graph for highest suicide rates
+    dcc.Graph(id='scatter-graph')  # Add the new scatter graph
 ], className="container")
 
 # Callback to clear the county dropdown and clickData when the clear button is clicked
 @app.callback(
     Output('memory-output', 'data'),
     Output('county-dropdown', 'value'),
-    Output('choropleth-map', 'selectedData'),
+    Output('animated-choropleth-map', 'clickData'),
     Input('clear-button', 'n_clicks')
 )
 def clear_counties(n_clicks):
@@ -818,65 +710,64 @@ def clear_counties(n_clicks):
         return [], None, None
     return no_update, no_update, no_update
 
-# Callback to update the map when the year slider is used
+# Update callback
 @app.callback(
-    Output('choropleth-map', 'figure'),
-    Input('year-slider', 'value')
-)
-def update_map(selected_year):
-    data = load_data(selected_year)
-    return create_choropleth_map(data)
-
-# Callback to update the graphs when the dropdown menu, radio items, and map selection are used
-@app.callback(
+    Output('animated-choropleth-map', 'figure'),
     Output('bar-graph', 'figure'),
     Output('trend-bar-graph', 'figure'),
     Output('summary-sunburst', 'figure'),
     Output('scatter-graph', 'figure'),
-    Output('highest-suicide-rates-bar', 'figure'),
     Output('category-notes', 'children'),
-    Input('confirm-button', 'n_clicks'),
+    Input('year-slider', 'value'),
+    Input('county-dropdown', 'value'),
     Input('category-radioitems', 'value'),
-    Input('choropleth-map', 'selectedData'),
-    State('county-dropdown', 'value'),
-    State('year-slider', 'value'),
-    State('clear-button', 'n_clicks')
+    Input('animated-choropleth-map', 'clickData'),
+    Input('clear-button', 'n_clicks'),
+    State('animated-choropleth-map', 'relayoutData')
 )
-def update_graphs(n_clicks_confirm, selected_category, selected_data, selected_counties, selected_year, n_clicks_clear):
-    ctx = callback_context
-
-    if ctx.triggered:
-        trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
-
-        if trigger_id == 'clear-button':
-            selected_data = None
-            selected_counties = []
-
-    # Initialize selected_counties to an empty list if it's None
-    if selected_counties is None:
-        selected_counties = []
+def update_figures(selected_year, selected_counties, selected_category, clickData, n_clicks, relayoutData):
+    # Ensure clickData is None if the clear button is clicked
+    if n_clicks and clickData:
+        clickData = None
 
     # Load data for the selected year
     data = load_data(selected_year)
 
-    # Process selected_data to add selected counties
-    if selected_data and 'points' in selected_data:
-        selected_counties = [point['location'] for point in selected_data['points']]
+    # Get the top 5 counties by suicide rate if no counties are selected
+    if not selected_counties:
+        selected_counties = get_top_5_counties(data)
 
+    # Process clickData to add selected county
+    if clickData:
+        location = clickData['points'][0]['location']
+        clicked_county = data[data['county_id'] == location]['CTYNAME'].values[0]
+        if clicked_county not in selected_counties:
+            selected_counties.append(clicked_county)
+
+    # Limit the number of selected counties to 5
     selected_counties = selected_counties[:5]
 
     # Create a color map for consistent coloring
     color_map = {county: color for county, color in zip(selected_counties, px.colors.qualitative.Vivid)}
 
+    # Load data for all years to create the animated choropleth map
+    all_years_data = []
+    for year in years:
+        year_data = load_data(year)
+        year_data['Year'] = year
+        all_years_data.append(year_data)
+    combined_data = pd.concat(all_years_data, ignore_index=True)
+
     # Create the updated figures
-    bar_graph_fig = update_bar_graph(selected_year, selected_counties, selected_category, selected_data)
+    animated_choropleth_map_fig = create_animated_choropleth_map(combined_data)
+    bar_graph_fig = update_bar_graph(selected_year, selected_counties, selected_category, clickData)
     trend_bar_graph_fig = trend_bar_graph(selected_year, selected_counties, color_map)
     summary_sunburst_fig = summary_sunburst(data)
     scatter_graph_fig = scatter_graph(selected_year, selected_counties, color_map)
-    highest_suicide_rates_bar_fig = update_highest_suicide_rates_bar(data, selected_counties, selected_data)
     category_notes = get_category_notes(selected_category)
 
-    return bar_graph_fig, trend_bar_graph_fig, summary_sunburst_fig, scatter_graph_fig, highest_suicide_rates_bar_fig,category_notes
+    return animated_choropleth_map_fig, bar_graph_fig, trend_bar_graph_fig, summary_sunburst_fig, scatter_graph_fig, category_notes
+
 
 # Run the Dash app
 if __name__ == '__main__':
@@ -884,3 +775,4 @@ if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0', port=port)
 
 
+    
